@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.2 — Direct roster trade popup
+ * Version 1.3 — Visible trade hub and roster arrow fixes
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -385,7 +385,7 @@
     var style = document.createElement("style");
     style.id = "jax-trade-styles";
     style.textContent = `
-      #${LAUNCHER_ID}{display:none!important;position:fixed;right:14px;bottom:14px;z-index:2147483000;background:#f3c65e;color:#15202b;border:3px solid #17212b;border-radius:7px;padding:11px 15px;font:900 14px/1.1 system-ui, sans-serif;letter-spacing:.6px;box-shadow:0 3px 0 #101820;cursor:pointer}
+      #${LAUNCHER_ID}{display:block!important;position:fixed;right:14px;bottom:14px;z-index:2147483000;background:#f3c65e;color:#15202b;border:3px solid #17212b;border-radius:7px;padding:11px 15px;font:900 14px/1.1 system-ui, sans-serif;letter-spacing:.6px;box-shadow:0 3px 0 #101820;cursor:pointer}
       #jax-roster-nav{position:fixed;inset:0;z-index:2147483000;pointer-events:none;display:none;font-family:system-ui,sans-serif}
       #jax-roster-nav .jax-roster-arrow{position:fixed;pointer-events:auto;display:flex;align-items:center;justify-content:center;padding:0;margin:0;background:#f3c65e;color:#17212a;border:2px solid #17212a;border-radius:4px;font-weight:1000;line-height:1;cursor:pointer;box-shadow:0 2px 0 #000;user-select:none}
       #jax-roster-nav .jax-roster-arrow:active{transform:translateY(1px);box-shadow:none}
@@ -943,10 +943,27 @@
 
   function currentRoomName() {
     try {
-      if (typeof window._pY2 === "undefined" || !window._TO2 || typeof window._TO2._Ue2 !== "function") return "";
-      var room = window._TO2._Ue2(window._pY2);
-      return room && room._51 ? String(room._51) : "";
+      // Retro Bowl's generated globals are normally exposed on window, but
+      // also try the direct global bindings in case the host wrapper differs.
+      var roomIndex = window._pY2;
+      if (roomIndex === undefined) {
+        try { if (typeof _pY2 !== "undefined") roomIndex = _pY2; } catch (ignored) {}
+      }
+      var roomManager = window._TO2;
+      if (!roomManager) {
+        try { if (typeof _TO2 !== "undefined") roomManager = _TO2; } catch (ignored) {}
+      }
+      if (roomIndex === undefined || roomIndex === null || !roomManager || typeof roomManager._Ue2 !== "function") return "";
+      var room = roomManager._Ue2(roomIndex);
+      if (typeof room === "string") return room;
+      if (room && (room._51 || room.name || room.roomName)) return String(room._51 || room.name || room.roomName);
+      return "";
     } catch (err) { return ""; }
+  }
+
+  function isRosterRoom(roomName) {
+    var normalized = String(roomName || "").toLowerCase();
+    return normalized === "rm_roster" || normalized === "roster" || normalized.endsWith("_roster");
   }
 
   function alphabeticalTeams(controller) {
@@ -1013,7 +1030,9 @@
   function positionRosterControls(roomName) {
     if (!rosterNav) return;
     var canvas = findGameCanvas();
-    var showNav = roomName === "rm_roster" && rosterBrowse.active;
+    // Keep arrows visible on the real roster screen even if controller
+    // discovery is delayed; clicks retry discovery before switching teams.
+    var showNav = isRosterRoom(roomName);
     rosterNav.style.display = showNav && canvas ? "block" : "none";
     rosterTradeButton.style.display = "none";
     if (!canvas) return;
@@ -1120,7 +1139,14 @@
   }
 
   function switchRosterTeam(direction) {
-    if (!rosterBrowse.active || !rosterBrowse.controller) return;
+    if (!rosterBrowse.active || !rosterBrowse.controller) {
+      var initialController = findController();
+      if (!initialController) {
+        if (rosterNavLabel) rosterNavLabel.textContent = "CAREER NOT READY";
+        return;
+      }
+      startRosterBrowse(initialController);
+    }
     var controller = rosterBrowse.controller;
     var teams = alphabeticalTeams(controller);
     if (!teams.length) return;
@@ -1200,16 +1226,25 @@
     var controller = findController();
     var roomName = currentRoomName();
     rosterBrowse.roomName = roomName;
+
+    // The roster arrows are shown based on the room itself. If controller
+    // discovery comes a little later, the arrows remain visible and retry on click.
+    if (isRosterRoom(roomName)) {
+      if (rosterBrowse.active && controller && controller !== rosterBrowse.controller) stopRosterBrowse();
+      if (!rosterBrowse.active && controller) startRosterBrowse(controller);
+      positionRosterControls(roomName);
+      return;
+    }
+
     if (!controller || !roomName) {
       if (rosterBrowse.active) stopRosterBrowse();
       positionRosterControls("");
       return;
     }
     if (rosterBrowse.active && controller !== rosterBrowse.controller) stopRosterBrowse();
-    if (!rosterBrowse.active && roomName === "rm_roster") startRosterBrowse(controller);
     // Keep the temporary native list alive while the game's own player details
     // or stats screens are showing a player from that list.
-    var keepBrowse = roomName === "rm_roster" || roomName === "rm_profile_player" || roomName === "rm_stats_player" || roomName === "rm_stats";
+    var keepBrowse = roomName === "rm_profile_player" || roomName === "rm_stats_player" || roomName === "rm_stats";
     if (rosterBrowse.active && !keepBrowse) stopRosterBrowse();
     positionRosterControls(roomName);
   }
@@ -1225,7 +1260,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.2-roster-direct-trade",
+    version: "1.3-roster-arrows-visible-hub",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
