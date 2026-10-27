@@ -115,9 +115,3 @@
     addTradeScreen();
   }
 })();
-
-  } else {
-    addTradeScreen();
-  }
-})();
-
