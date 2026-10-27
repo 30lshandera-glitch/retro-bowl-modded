@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.0
+ * Version 1.1 — Native roster arrows
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -22,6 +22,24 @@
   var lastTradeResult = "";
   var pauseBeforeOpen = null;
   var teamCache = [];
+  // Native roster-browser state. The ordinary game roster list is restored
+  // whenever the player leaves the roster/profile screens.
+  var rosterBrowse = {
+    active: false,
+    controller: null,
+    ownListId: null,
+    currentTeamId: null,
+    tempListId: null,
+    tempMapIds: [],
+    tempRecords: [],
+    roomName: ""
+  };
+  var rosterNav = null;
+  var rosterNavLabel = null;
+  var rosterPrevButton = null;
+  var rosterNextButton = null;
+  var rosterTradeButton = null;
+  var rosterBrowserTimer = null;
   var playerPositionNames = {
     1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "OL",
     6: "DL", 7: "LB", 8: "DB", 9: "K", 10: "P"
@@ -334,7 +352,11 @@
   }
 
   function getOwnRoster(controller) {
-    return listItems(controller._Ln).map(function (mapId, index) {
+    // While the native roster screen is browsing another team, _Ln temporarily
+    // points at that team's display list. Offers must still use the real roster.
+    var rosterListId = controller && rosterBrowse.active && controller === rosterBrowse.controller && rosterBrowse.ownListId !== null
+      ? rosterBrowse.ownListId : controller._Ln;
+    return listItems(rosterListId).map(function (mapId, index) {
       return { index: index, mapId: mapId, record: snapshotMap(mapId), name: getPlayerName(mapId) };
     }).filter(function (player) { return player.record && player.record.lname; });
   }
@@ -363,7 +385,12 @@
     var style = document.createElement("style");
     style.id = "jax-trade-styles";
     style.textContent = `
-      #${LAUNCHER_ID}{position:fixed;right:14px;bottom:14px;z-index:2147483000;background:#f3c65e;color:#15202b;border:3px solid #17212b;border-radius:7px;padding:11px 15px;font:900 14px/1.1 system-ui, sans-serif;letter-spacing:.6px;box-shadow:0 3px 0 #101820;cursor:pointer}
+      #${LAUNCHER_ID}{display:none!important;position:fixed;right:14px;bottom:14px;z-index:2147483000;background:#f3c65e;color:#15202b;border:3px solid #17212b;border-radius:7px;padding:11px 15px;font:900 14px/1.1 system-ui, sans-serif;letter-spacing:.6px;box-shadow:0 3px 0 #101820;cursor:pointer}
+      #jax-roster-nav{position:fixed;inset:0;z-index:2147483000;pointer-events:none;display:none;font-family:system-ui,sans-serif}
+      #jax-roster-nav .jax-roster-arrow{position:fixed;pointer-events:auto;display:flex;align-items:center;justify-content:center;padding:0;margin:0;background:#f3c65e;color:#17212a;border:2px solid #17212a;border-radius:4px;font-weight:1000;line-height:1;cursor:pointer;box-shadow:0 2px 0 #000;user-select:none}
+      #jax-roster-nav .jax-roster-arrow:active{transform:translateY(1px);box-shadow:none}
+      #jax-roster-nav .jax-roster-team{position:fixed;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;background:#17212a;color:#f3c65e;border:2px solid #f3c65e;border-radius:4px;font-weight:950;letter-spacing:.3px;text-shadow:1px 1px #000;padding:0 4px}
+      #jax-roster-trade-action{position:fixed;z-index:2147483000;display:none;pointer-events:auto;background:#f3c65e;color:#17212a;border:2px solid #17212a;border-radius:4px;padding:7px 10px;font:950 12px/1 system-ui,sans-serif;box-shadow:0 2px 0 #000;cursor:pointer}
       #${LAUNCHER_ID}:hover{filter:brightness(1.05);transform:translateY(-1px)}
       #${ROOT_ID}{position:fixed;inset:0;z-index:2147483001;background:rgba(4,10,15,.84);display:none;align-items:center;justify-content:center;padding:12px;font:14px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;color:#f2f5f7}
       #${ROOT_ID}.open{display:flex}
@@ -712,6 +739,10 @@
           document.getElementById("tc-profile").hidden = true;
           renderTeam();
         } catch (err) {
+          if (rosterBrowse.active && rosterBrowse.controller === freshController && rosterBrowse.currentTeamId !== null) {
+            var retryTeam = alphabeticalTeams(freshController).filter(function (team) { return team.id === rosterBrowse.currentTeamId; })[0];
+            if (retryTeam) activateRivalRoster(retryTeam);
+          }
           result.classList.add("error");
           result.textContent = "The offer was accepted, but the game could not finish applying the trade safely. No success is reported. Details: " + (err && err.message ? err.message : String(err));
         }
@@ -741,6 +772,8 @@
   }
 
   function applyAcceptedTrade(controller, selected, offerType, offerData) {
+    var wasBrowsingRoster = rosterBrowse.active && controller === rosterBrowse.controller;
+    if (wasBrowsingRoster && rosterBrowse.ownListId !== null) controller._Ln = rosterBrowse.ownListId;
     var ownId = toNumber(controller._Ip, 0);
     var targetRecord = JSON.parse(JSON.stringify(selected.player));
     var outgoingSnapshot = null;
@@ -832,6 +865,14 @@
         window._eL("savegame", "draft_picks_2", controller._6v[2]);
       }
     } catch (err) {}
+    // The trade is committed against the real user roster. Rebuild the displayed
+    // rival list afterward so the accepted player is no longer shown on that team.
+    if (wasBrowsingRoster && rosterBrowse.active && rosterBrowse.controller === controller) {
+      rosterBrowse.ownListId = controller._Ln;
+      var browseTeams = alphabeticalTeams(controller);
+      var browseTeam = browseTeams.filter(function (team) { return team.id === rosterBrowse.currentTeamId; })[0];
+      if (browseTeam) activateRivalRoster(browseTeam);
+    }
   }
 
   function makeLivePlayerMap(controller, record, ownId) {
@@ -870,8 +911,269 @@
     status.innerHTML = '<div class="tc-message' + (isError ? ' error' : '') + '">' + esc(message) + '</div>';
   }
 
+  function currentRoomName() {
+    try {
+      if (typeof window._pY2 === "undefined" || !window._TO2 || typeof window._TO2._Ue2 !== "function") return "";
+      var room = window._TO2._Ue2(window._pY2);
+      return room && room._51 ? String(room._51) : "";
+    } catch (err) { return ""; }
+  }
+
+  function alphabeticalTeams(controller) {
+    return getTeams(controller).slice().sort(function (a, b) {
+      var cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      return cmp || a.id - b.id;
+    });
+  }
+
+  function findGameCanvas() {
+    var canvases = Array.prototype.slice.call(document.querySelectorAll("canvas"));
+    var best = null;
+    var bestArea = 0;
+    canvases.forEach(function (canvas) {
+      var rect = canvas.getBoundingClientRect();
+      var area = rect.width * rect.height;
+      if (rect.width > 120 && rect.height > 80 && area > bestArea) {
+        best = canvas;
+        bestArea = area;
+      }
+    });
+    return best;
+  }
+
+  function buildRosterNav() {
+    if (rosterNav) return;
+    rosterNav = document.createElement("div");
+    rosterNav.id = "jax-roster-nav";
+    rosterPrevButton = document.createElement("button");
+    rosterPrevButton.type = "button";
+    rosterPrevButton.className = "jax-roster-arrow";
+    rosterPrevButton.textContent = "◀";
+    rosterPrevButton.setAttribute("aria-label", "Previous team alphabetically");
+    rosterPrevButton.title = "Previous team alphabetically";
+    rosterNextButton = document.createElement("button");
+    rosterNextButton.type = "button";
+    rosterNextButton.className = "jax-roster-arrow";
+    rosterNextButton.textContent = "▶";
+    rosterNextButton.setAttribute("aria-label", "Next team alphabetically");
+    rosterNextButton.title = "Next team alphabetically";
+    rosterNavLabel = document.createElement("div");
+    rosterNavLabel.className = "jax-roster-team";
+    rosterNav.appendChild(rosterPrevButton);
+    rosterNav.appendChild(rosterNavLabel);
+    rosterNav.appendChild(rosterNextButton);
+    document.body.appendChild(rosterNav);
+    rosterPrevButton.addEventListener("click", function (event) {
+      event.preventDefault(); event.stopPropagation(); switchRosterTeam(-1);
+    });
+    rosterNextButton.addEventListener("click", function (event) {
+      event.preventDefault(); event.stopPropagation(); switchRosterTeam(1);
+    });
+
+    rosterTradeButton = document.createElement("button");
+    rosterTradeButton.id = "jax-roster-trade-action";
+    rosterTradeButton.type = "button";
+    rosterTradeButton.textContent = "TRADE FOR PLAYER";
+    rosterTradeButton.addEventListener("click", function (event) {
+      event.preventDefault(); event.stopPropagation(); openTradeForViewedPlayer();
+    });
+    document.body.appendChild(rosterTradeButton);
+  }
+
+  function positionRosterControls(roomName) {
+    if (!rosterNav) return;
+    var canvas = findGameCanvas();
+    var showNav = roomName === "rm_roster" && rosterBrowse.active;
+    rosterNav.style.display = showNav && canvas ? "block" : "none";
+    rosterTradeButton.style.display = "none";
+    if (!canvas) return;
+    var rect = canvas.getBoundingClientRect();
+    var sx = rect.width / 480;
+    var sy = rect.height / 270;
+    function place(el, x, y, w, h) {
+      el.style.left = (rect.left + x * sx) + "px";
+      el.style.top = (rect.top + y * sy) + "px";
+      el.style.width = (w * sx) + "px";
+      el.style.height = (h * sy) + "px";
+      el.style.fontSize = Math.max(10, 12 * sy) + "px";
+    }
+    if (showNav) {
+      place(rosterPrevButton, 143, 7, 27, 22);
+      place(rosterNavLabel, 172, 7, 136, 22);
+      place(rosterNextButton, 310, 7, 27, 22);
+      var ctl = rosterBrowse.controller;
+      var team = ctl && alphabeticalTeams(ctl).filter(function (entry) { return entry.id === rosterBrowse.currentTeamId; })[0];
+      rosterNavLabel.textContent = team ? (team.name + (team.tla ? " · " + team.tla : "")) : "ROSTER";
+      rosterNavLabel.title = team ? team.name : "Roster";
+      var buttonScale = Math.max(0.8, Math.min(1.6, sy));
+      rosterNavLabel.style.fontSize = Math.max(9, 10 * buttonScale) + "px";
+    }
+    // The game's own player-profile room still renders the portrait and stats.
+    // Add our trade action only when the selected map belongs to the viewed rival.
+    if (roomName === "rm_profile_player" && rosterBrowse.active && rosterBrowse.controller) {
+      var controller = rosterBrowse.controller;
+      var viewedMapId = toNumber(controller._Mn, -999);
+      var isOwnTeam = rosterBrowse.currentTeamId === toNumber(controller._Ip, -998);
+      var target = null;
+      if (!isOwnTeam) {
+        for (var i = 0; i < rosterBrowse.tempRecords.length; i++) {
+          if (rosterBrowse.tempRecords[i].mapId === viewedMapId) { target = rosterBrowse.tempRecords[i]; break; }
+        }
+      }
+      if (target) {
+        place(rosterTradeButton, 344, 238, 126, 25);
+        rosterTradeButton.style.display = "block";
+        rosterTradeButton.style.fontSize = Math.max(9, 10 * sy) + "px";
+        rosterTradeButton.dataset.playerId = target.playerId;
+      }
+    }
+  }
+
+  function disposeTemporaryRoster() {
+    var controller = rosterBrowse.controller;
+    if (controller && rosterBrowse.tempListId !== null && controller._Ln === rosterBrowse.tempListId && rosterBrowse.ownListId !== null) {
+      controller._Ln = rosterBrowse.ownListId;
+    }
+    rosterBrowse.tempMapIds.forEach(function (mapId) {
+      try { if (typeof window._fq === "function") window._fq(mapId); } catch (err) {}
+    });
+    if (rosterBrowse.tempListId !== null) {
+      try { if (typeof window._bj === "function") window._bj(rosterBrowse.tempListId); } catch (err) {}
+    }
+    rosterBrowse.tempListId = null;
+    rosterBrowse.tempMapIds = [];
+    rosterBrowse.tempRecords = [];
+  }
+
+  function activateRivalRoster(team) {
+    var controller = rosterBrowse.controller;
+    if (!controller || !team) return false;
+    disposeTemporaryRoster();
+    controller._Ln = rosterBrowse.ownListId;
+    if (team.id === toNumber(controller._Ip, -999)) {
+      controller._Mn = -4;
+      return true;
+    }
+    if (typeof window._4j !== "function" || typeof window._8j !== "function") return false;
+    var state = ensureRivalRoster(controller, team);
+    var listId = window._4j();
+    var mapIds = [];
+    var records = [];
+    try {
+      state.players.forEach(function (record) {
+        var mapId = makeLivePlayerMap(controller, record, team.id);
+        if (mapId === null || mapId === undefined || mapId < 0) return;
+        setMapField(mapId, "teamid", team.id);
+        setMapField(mapId, "signed_year", toNumber(controller._fj, 1));
+        setMapField(mapId, "outtrade_pick", 0);
+        setMapField(mapId, "intrade_pick", 0);
+        window._8j(listId, mapId);
+        mapIds.push(mapId);
+        records.push({ mapId: mapId, playerId: record._jaxTradeId });
+      });
+      if (!mapIds.length) {
+        try { if (typeof window._bj === "function") window._bj(listId); } catch (err) {}
+        return false;
+      }
+      rosterBrowse.tempListId = listId;
+      rosterBrowse.tempMapIds = mapIds;
+      rosterBrowse.tempRecords = records;
+      controller._Ln = listId;
+      controller._Mn = -4;
+      return true;
+    } catch (err) {
+      mapIds.forEach(function (mapId) { try { window._fq(mapId); } catch (ignored) {} });
+      try { if (typeof window._bj === "function") window._bj(listId); } catch (ignored) {}
+      controller._Ln = rosterBrowse.ownListId;
+      return false;
+    }
+  }
+
+  function switchRosterTeam(direction) {
+    if (!rosterBrowse.active || !rosterBrowse.controller) return;
+    var controller = rosterBrowse.controller;
+    var teams = alphabeticalTeams(controller);
+    if (!teams.length) return;
+    var index = teams.findIndex(function (team) { return team.id === rosterBrowse.currentTeamId; });
+    if (index < 0) index = Math.max(0, teams.findIndex(function (team) { return team.id === toNumber(controller._Ip, -999); }));
+    index = (index + direction + teams.length) % teams.length;
+    var target = teams[index];
+    if (!activateRivalRoster(target)) {
+      if (rosterNavLabel) rosterNavLabel.textContent = "Roster unavailable";
+      return;
+    }
+    rosterBrowse.currentTeamId = target.id;
+    rosterNavLabel.textContent = target.name + (target.tla ? " · " + target.tla : "");
+    positionRosterControls("rm_roster");
+  }
+
+  function startRosterBrowse(controller) {
+    if (rosterBrowse.active) return;
+    rosterBrowse.active = true;
+    rosterBrowse.controller = controller;
+    rosterBrowse.ownListId = controller._Ln;
+    rosterBrowse.currentTeamId = toNumber(controller._Ip, -999);
+    rosterBrowse.tempListId = null;
+    rosterBrowse.tempMapIds = [];
+    rosterBrowse.tempRecords = [];
+  }
+
+  function stopRosterBrowse() {
+    var controller = rosterBrowse.controller;
+    disposeTemporaryRoster();
+    if (controller && rosterBrowse.ownListId !== null) controller._Ln = rosterBrowse.ownListId;
+    rosterBrowse.active = false;
+    rosterBrowse.controller = null;
+    rosterBrowse.ownListId = null;
+    rosterBrowse.currentTeamId = null;
+    rosterBrowse.roomName = "";
+    if (rosterNav) rosterNav.style.display = "none";
+    if (rosterTradeButton) rosterTradeButton.style.display = "none";
+  }
+
+  function openTradeForViewedPlayer() {
+    if (!rosterBrowse.active || !rosterBrowse.controller) return;
+    var playerId = rosterTradeButton && rosterTradeButton.dataset.playerId;
+    var teamId = rosterBrowse.currentTeamId;
+    if (!playerId || teamId === null) return;
+    currentPlayerId = playerId;
+    currentPlayerTeamId = teamId;
+    currentTeamId = teamId;
+    openTradeCenter();
+    // openTradeCenter creates/refreshes the selection controls; force the exact
+    // player whose native profile was clicked, then display only the trade flow.
+    var profile = document.getElementById("tc-profile");
+    var offerPanel = document.getElementById("tc-offer-panel");
+    if (profile) profile.hidden = true;
+    if (offerPanel) offerPanel.hidden = true;
+    renderTeam();
+    renderProfile();
+    renderOfferPanel();
+  }
+
+  function syncRosterBrowser() {
+    buildRosterNav();
+    var controller = findController();
+    var roomName = currentRoomName();
+    rosterBrowse.roomName = roomName;
+    if (!controller || !roomName) {
+      if (rosterBrowse.active) stopRosterBrowse();
+      positionRosterControls("");
+      return;
+    }
+    if (rosterBrowse.active && controller !== rosterBrowse.controller) stopRosterBrowse();
+    if (!rosterBrowse.active && roomName === "rm_roster") startRosterBrowse(controller);
+    // Keep the temporary native list alive while the game's own player details
+    // or stats screens are showing a player from that list.
+    var keepBrowse = roomName === "rm_roster" || roomName === "rm_profile_player" || roomName === "rm_stats_player" || roomName === "rm_stats";
+    if (rosterBrowse.active && !keepBrowse) stopRosterBrowse();
+    positionRosterControls(roomName);
+  }
+
   function initialize() {
     buildUi();
+    buildRosterNav();
+    if (!rosterBrowserTimer) rosterBrowserTimer = window.setInterval(syncRosterBrowser, 250);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialize);
@@ -879,9 +1181,19 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.0",
+    version: "1.1-roster-browser",
     open: openTradeCenter,
     close: closeTradeCenter,
+    getBrowserStatus: function () {
+      return {
+        room: currentRoomName(),
+        active: rosterBrowse.active,
+        teamId: rosterBrowse.currentTeamId,
+        teamName: rosterBrowse.controller ? (alphabeticalTeams(rosterBrowse.controller).filter(function (team) { return team.id === rosterBrowse.currentTeamId; })[0] || {}).name || "" : "",
+        nativeRosterList: rosterBrowse.controller ? rosterBrowse.controller._Ln : null,
+        ownRosterList: rosterBrowse.ownListId
+      };
+    },
     evaluateOffer: function (offerValue, targetValue, needBonus) {
       var ratio = toNumber(offerValue, 0) / Math.max(1, toNumber(targetValue, 1)) + toNumber(needBonus, 0);
       return ratio >= 1.08 ? { decision: "accept", ratio: ratio } : ratio >= 0.76 ? { decision: "counter", ratio: ratio } : { decision: "reject", ratio: ratio };
