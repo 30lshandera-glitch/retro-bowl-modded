@@ -1,18 +1,26 @@
-
 /*
  * Retro Bowl Trade System
- * Version 0.3 - First trade screen
+ * Version 0.4 - Trade Asset Types
  */
-
 (function () {
   function evaluateOffer(offer, team) {
+    if (
+      offer.offeredType === "credits" &&
+      offer.requestedType === "credits"
+    ) {
+      return {
+        decision: "reject",
+        reason: "Credits cannot be traded for credits."
+      };
+    }
+
     var offered = Number(offer.offeredValue) || 0;
     var requested = Number(offer.requestedValue) || 0;
 
     if (offered <= 0 || requested <= 0) {
       return {
         decision: "reject",
-        reason: "Enter two values greater than zero."
+        reason: "Both trade values must be greater than zero."
       };
     }
 
@@ -53,24 +61,30 @@
 
     section.innerHTML = `
       <h2>AI TRADE TEST</h2>
-      <label for="trade-offered">VALUE YOU OFFER</label>
-      <div class="line">
-        <input id="trade-offered" type="number"
-          min="1" value="100" />
-      </div>
 
-      <label for="trade-requested">VALUE YOU WANT</label>
-      <div class="line">
-        <input id="trade-requested" type="number"
-          min="1" value="100" />
-      </div>
+      <label>YOU OFFER</label>
+      <select id="trade-offer-type">
+        <option value="credits">Coaching credits</option>
+        <option value="player">Player</option>
+        <option value="pick">Draft pick</option>
+      </select>
+      <input id="trade-offered" type="number"
+        min="1" value="100" />
+
+      <label>YOU WANT</label>
+      <select id="trade-request-type">
+        <option value="player">Player</option>
+        <option value="pick">Draft pick</option>
+        <option value="credits">Coaching credits</option>
+      </select>
+      <input id="trade-requested" type="number"
+        min="1" value="100" />
 
       <button class="fullbtn" id="trade-evaluate"
         type="button">SEND TRADE OFFER</button>
 
-      <p id="trade-result"
-        style="font-size:9px;line-height:1.8">
-        Choose your values and send an offer.
+      <p id="trade-result">
+        Choose your trade assets.
       </p>
     `;
 
@@ -79,6 +93,10 @@
     document.getElementById("trade-evaluate").onclick =
       function () {
         var offer = {
+          offeredType:
+            document.getElementById("trade-offer-type").value,
+          requestedType:
+            document.getElementById("trade-request-type").value,
           offeredValue:
             document.getElementById("trade-offered").value,
           requestedValue:
@@ -86,15 +104,18 @@
         };
 
         var result = evaluateOffer(offer, {});
-        var output = document.getElementById("trade-result");
-
-        output.textContent =
+        document.getElementById("trade-result").textContent =
           result.decision.toUpperCase() + " — " + result.reason;
       };
   }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", addTradeScreen);
+  } else {
+    addTradeScreen();
+  }
+})();
+
   } else {
     addTradeScreen();
   }
