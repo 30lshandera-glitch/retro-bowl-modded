@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.4 — Native roster team browser
+ * Version 1.5 — Roster browser diagnostics
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -42,6 +42,9 @@
   var rosterAllTeamsButton = null;
   var rosterTeamList = null;
   var rosterBrowserTimer = null;
+  var rosterDebugPanel = null;
+  var rosterDebugText = null;
+  var rosterSyncError = "";
   var playerPositionNames = {
     1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "OL",
     6: "DL", 7: "LB", 8: "DB", 9: "K", 10: "P"
@@ -399,6 +402,10 @@
       #jax-roster-team-list.open{display:grid}
       #jax-roster-team-list button{background:#1445b1;color:#fff;border:1px solid #b9d2ff;padding:5px 4px;font:900 10px/1.1 monospace;cursor:pointer;min-width:0;overflow-wrap:anywhere}
       #jax-roster-team-list button.current{background:#fff;color:#123a9b;border-color:#f4d13f}
+      #jax-roster-debug-panel{position:fixed;left:8px;top:8px;z-index:2147483647;width:min(360px,calc(100vw - 16px));max-height:45vh;overflow:auto;background:rgba(6,12,22,.96);color:#fff;border:2px solid #ffd85a;border-radius:6px;padding:8px;font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;box-shadow:0 3px 12px rgba(0,0,0,.6);pointer-events:auto}
+      #jax-roster-debug-panel .jax-debug-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:900;color:#ffd85a;margin-bottom:5px}
+      #jax-roster-debug-panel button{background:#193e8c;color:#fff;border:1px solid #fff;border-radius:3px;padding:2px 6px;font:inherit;cursor:pointer}
+      #jax-roster-debug-panel pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font:inherit}
       #${LAUNCHER_ID}:hover{filter:brightness(1.05);transform:translateY(-1px)}
       #${ROOT_ID}{position:fixed;inset:0;z-index:2147483001;background:rgba(4,10,15,.84);display:none;align-items:center;justify-content:center;padding:12px;font:14px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;color:#f2f5f7}
       #${ROOT_ID}.open{display:flex}
@@ -1289,6 +1296,72 @@
     renderOfferPanel();
   }
 
+  function buildRosterDebugPanel() {
+    if (rosterDebugPanel) return;
+    rosterDebugPanel = document.createElement("div");
+    rosterDebugPanel.id = "jax-roster-debug-panel";
+    var head = document.createElement("div");
+    head.className = "jax-debug-head";
+    var title = document.createElement("span");
+    title.textContent = "ROSTER BROWSER DIAGNOSTIC v1.5";
+    var hide = document.createElement("button");
+    hide.type = "button";
+    hide.textContent = "HIDE";
+    hide.title = "Hide this diagnostic panel until the page is reloaded";
+    hide.addEventListener("click", function () { rosterDebugPanel.style.display = "none"; });
+    head.appendChild(title);
+    head.appendChild(hide);
+    rosterDebugText = document.createElement("pre");
+    rosterDebugText.textContent = "Reading game state…";
+    rosterDebugPanel.appendChild(head);
+    rosterDebugPanel.appendChild(rosterDebugText);
+    document.body.appendChild(rosterDebugPanel);
+  }
+
+  function updateRosterDebugPanel() {
+    if (!rosterDebugPanel || !rosterDebugText) return;
+    var roomName = currentRoomName();
+    var roomIndex = (typeof window._pY2 === "number" || typeof window._pY2 === "string") ? window._pY2 : "not exposed on window";
+    var roomManager = window._TO2;
+    var managerReady = !!(roomManager && typeof roomManager._Ue2 === "function");
+    var nativeRoomHelper = "not available";
+    try {
+      if (typeof window._MH2 === "function" && typeof roomIndex === "number") nativeRoomHelper = String(window._MH2(roomIndex) || "(empty)");
+    } catch (error) { nativeRoomHelper = "error: " + String(error && error.message || error); }
+    var canvas = findGameCanvas();
+    var canvasText = "NO";
+    if (canvas) {
+      var cr = canvas.getBoundingClientRect();
+      canvasText = "YES (" + Math.round(cr.width) + " × " + Math.round(cr.height) + " CSS px; " + Math.round(cr.left) + "," + Math.round(cr.top) + ")";
+    }
+    var controller = findController();
+    var navStyle = rosterNav ? rosterNav.style.display : "not built";
+    var prevStyle = rosterPrevButton ? window.getComputedStyle(rosterPrevButton).display + "/" + window.getComputedStyle(rosterPrevButton).visibility : "not built";
+    var nextStyle = rosterNextButton ? window.getComputedStyle(rosterNextButton).display + "/" + window.getComputedStyle(rosterNextButton).visibility : "not built";
+    var navRect = rosterPrevButton ? rosterPrevButton.getBoundingClientRect() : null;
+    var navRectText = navRect ? (Math.round(navRect.left) + "," + Math.round(navRect.top) + " " + Math.round(navRect.width) + "×" + Math.round(navRect.height)) : "not built";
+    var rightRect = rosterNextButton ? rosterNextButton.getBoundingClientRect() : null;
+    var rightRectText = rightRect ? (Math.round(rightRect.left) + "," + Math.round(rightRect.top) + " " + Math.round(rightRect.width) + "×" + Math.round(rightRect.height)) : "not built";
+    rosterDebugText.textContent = [
+      "Room index: " + roomIndex,
+      "Room name: " + (roomName || "(could not read)"),
+      "Native room helper: " + nativeRoomHelper,
+      "Roster recognized: " + (isRosterRoom(roomName) ? "YES" : "NO"),
+      "Room manager ready: " + (managerReady ? "YES" : "NO"),
+      "Game canvas: " + canvasText,
+      "Game controller found: " + (controller ? "YES" : "NO"),
+      "Browser active: " + (rosterBrowse.active ? "YES" : "NO"),
+      "Native roster list: " + (controller ? controller._Ln : "n/a"),
+      "Navigation overlay display: " + navStyle,
+      "Left arrow computed style: " + prevStyle,
+      "Right arrow computed style: " + nextStyle,
+      "Left arrow box: " + navRectText,
+      "Right arrow box: " + rightRectText,
+      "Sync error: " + (rosterSyncError || "none"),
+      ""
+    ].join("\n");
+  }
+
   function syncRosterBrowser() {
     buildRosterNav();
     var controller = findController();
@@ -1320,7 +1393,13 @@
   function initialize() {
     buildUi();
     buildRosterNav();
-    if (!rosterBrowserTimer) rosterBrowserTimer = window.setInterval(syncRosterBrowser, 250);
+    buildRosterDebugPanel();
+    updateRosterDebugPanel();
+    if (!rosterBrowserTimer) rosterBrowserTimer = window.setInterval(function () {
+      try { syncRosterBrowser(); rosterSyncError = ""; }
+      catch (error) { rosterSyncError = String(error && error.message || error); }
+      try { updateRosterDebugPanel(); } catch (error) {}
+    }, 250);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialize);
@@ -1328,7 +1407,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.4-native-roster-team-browser",
+    version: "1.5-roster-browser-diagnostics",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
