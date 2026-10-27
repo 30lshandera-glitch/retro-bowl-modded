@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.1 — Native roster arrows
+ * Version 1.2 — Direct roster trade popup
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -427,6 +427,11 @@
       #${ROOT_ID} .tc-message.error{border-left-color:#de665d}
       #${ROOT_ID} .tc-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
       #${ROOT_ID} .tc-smallprint{font-size:11px;color:#aebbc3;margin-top:9px;line-height:1.5}
+      #${ROOT_ID}.quick-trade .tc-shell{width:min(600px,100%)}
+      #${ROOT_ID}.quick-trade .tc-content{display:block;padding:16px}
+      #${ROOT_ID}.quick-trade .tc-content>.tc-card:not(#tc-offer-panel){display:none!important}
+      #${ROOT_ID}.quick-trade #tc-offer-panel{display:block!important}
+      #${ROOT_ID}.quick-trade #tc-offer-panel[hidden]{display:none!important}
       @media(max-width:700px){#${ROOT_ID} .tc-content{grid-template-columns:1fr}#${ROOT_ID} .tc-title{font-size:18px}#${ROOT_ID} .tc-wide{grid-column:auto}#${ROOT_ID} .tc-offer-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
@@ -500,7 +505,13 @@
     }
     pauseBeforeOpen = typeof window._cg4 === "boolean" ? window._cg4 : null;
     if (typeof window._cg4 === "boolean") window._cg4 = true;
-    document.getElementById(ROOT_ID).classList.add("open");
+    var root = document.getElementById(ROOT_ID);
+    root.classList.remove("quick-trade");
+    var title = root.querySelector(".tc-title");
+    var subtitle = root.querySelector(".tc-subtitle");
+    if (title) title.textContent = "LEAGUE TRADE CENTER";
+    if (subtitle) subtitle.textContent = "Browse teams, inspect players, and negotiate deals";
+    root.classList.add("open");
     teamCache = getTeams(controller);
     populateTeams(controller);
     renderTeam();
@@ -508,7 +519,13 @@
 
   function closeTradeCenter() {
     var root = document.getElementById(ROOT_ID);
-    if (root) root.classList.remove("open");
+    if (root) {
+      root.classList.remove("open", "quick-trade");
+      var title = root.querySelector(".tc-title");
+      var subtitle = root.querySelector(".tc-subtitle");
+      if (title) title.textContent = "LEAGUE TRADE CENTER";
+      if (subtitle) subtitle.textContent = "Browse teams, inspect players, and negotiate deals";
+    }
     if (pauseBeforeOpen !== null && typeof window._cg4 === "boolean") window._cg4 = pauseBeforeOpen;
     pauseBeforeOpen = null;
   }
@@ -672,7 +689,11 @@
     }
     typeSelect.addEventListener("change", updateInput);
     updateInput();
-    panel.querySelector("#tc-cancel-offer").addEventListener("click", function () { panel.hidden = true; });
+    panel.querySelector("#tc-cancel-offer").addEventListener("click", function () {
+      var root = document.getElementById(ROOT_ID);
+      if (root && root.classList.contains("quick-trade")) closeTradeCenter();
+      else panel.hidden = true;
+    });
     panel.querySelector("#tc-send-offer").addEventListener("click", function () {
       var latest = selectedRivalPlayer();
       var freshController = findController();
@@ -735,8 +756,17 @@
           result.textContent = "ACCEPTED — " + reason + " " + getPlayerName(latest.player) + " joined your roster.";
           lastTradeResult = getPlayerName(latest.player) + " acquired from " + latest.team.name + ".";
           currentPlayerId = null;
-          panel.hidden = true;
-          document.getElementById("tc-profile").hidden = true;
+          var tradeRoot = document.getElementById(ROOT_ID);
+          if (tradeRoot && tradeRoot.classList.contains("quick-trade")) {
+            result.textContent = "ACCEPTED — " + getPlayerName(latest.player) + " joined your roster. Press CLOSE when you're ready.";
+            var sendButton = panel.querySelector("#tc-send-offer");
+            var cancelButton = panel.querySelector("#tc-cancel-offer");
+            if (sendButton) sendButton.disabled = true;
+            if (cancelButton) cancelButton.textContent = "CLOSE";
+          } else {
+            panel.hidden = true;
+            document.getElementById("tc-profile").hidden = true;
+          }
           renderTeam();
         } catch (err) {
           if (rosterBrowse.active && rosterBrowse.controller === freshController && rosterBrowse.currentTeamId !== null) {
@@ -1136,18 +1166,32 @@
     var playerId = rosterTradeButton && rosterTradeButton.dataset.playerId;
     var teamId = rosterBrowse.currentTeamId;
     if (!playerId || teamId === null) return;
+
+    var controller = findController();
+    if (!controller) return;
+    buildUi();
     currentPlayerId = playerId;
     currentPlayerTeamId = teamId;
     currentTeamId = teamId;
-    openTradeCenter();
-    // openTradeCenter creates/refreshes the selection controls; force the exact
-    // player whose native profile was clicked, then display only the trade flow.
+    lastTradeResult = "";
+    teamCache = getTeams(controller);
+
+    pauseBeforeOpen = typeof window._cg4 === "boolean" ? window._cg4 : null;
+    if (typeof window._cg4 === "boolean") window._cg4 = true;
+
+    var root = document.getElementById(ROOT_ID);
+    root.classList.add("quick-trade", "open");
+    var title = root.querySelector(".tc-title");
+    var subtitle = root.querySelector(".tc-subtitle");
+    if (title) title.textContent = "TRADE OFFER";
+    var team = teamById(teamId);
+    var rival = selectedRivalPlayer();
+    if (subtitle) subtitle.textContent = rival ? "Make an offer for " + getPlayerName(rival.player) + " · " + (team ? team.name : "opponent") : "Make an offer for the selected player";
+
     var profile = document.getElementById("tc-profile");
     var offerPanel = document.getElementById("tc-offer-panel");
     if (profile) profile.hidden = true;
     if (offerPanel) offerPanel.hidden = true;
-    renderTeam();
-    renderProfile();
     renderOfferPanel();
   }
 
@@ -1181,7 +1225,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.1-roster-browser",
+    version: "1.2-roster-direct-trade",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
