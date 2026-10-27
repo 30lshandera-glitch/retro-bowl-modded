@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.3 — Visible trade hub and roster arrow fixes
+ * Version 1.4 — Native roster team browser
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -39,6 +39,8 @@
   var rosterPrevButton = null;
   var rosterNextButton = null;
   var rosterTradeButton = null;
+  var rosterAllTeamsButton = null;
+  var rosterTeamList = null;
   var rosterBrowserTimer = null;
   var playerPositionNames = {
     1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "OL",
@@ -387,10 +389,16 @@
     style.textContent = `
       #${LAUNCHER_ID}{display:block!important;position:fixed;right:14px;bottom:14px;z-index:2147483000;background:#f3c65e;color:#15202b;border:3px solid #17212b;border-radius:7px;padding:11px 15px;font:900 14px/1.1 system-ui, sans-serif;letter-spacing:.6px;box-shadow:0 3px 0 #101820;cursor:pointer}
       #jax-roster-nav{position:fixed;inset:0;z-index:2147483000;pointer-events:none;display:none;font-family:system-ui,sans-serif}
-      #jax-roster-nav .jax-roster-arrow{position:fixed;pointer-events:auto;display:flex;align-items:center;justify-content:center;padding:0;margin:0;background:#f3c65e;color:#17212a;border:2px solid #17212a;border-radius:4px;font-weight:1000;line-height:1;cursor:pointer;box-shadow:0 2px 0 #000;user-select:none}
+      #jax-roster-nav .jax-roster-arrow{position:fixed;pointer-events:auto;display:flex;align-items:center;justify-content:center;padding:0;margin:0;background:#102e75;color:#fff;border:2px solid #fff;border-radius:50%;font-weight:1000;line-height:1;cursor:pointer;box-shadow:0 2px 0 #081943;user-select:none;font-family:monospace}
       #jax-roster-nav .jax-roster-arrow:active{transform:translateY(1px);box-shadow:none}
-      #jax-roster-nav .jax-roster-team{position:fixed;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;background:#17212a;color:#f3c65e;border:2px solid #f3c65e;border-radius:4px;font-weight:950;letter-spacing:.3px;text-shadow:1px 1px #000;padding:0 4px}
-      #jax-roster-trade-action{position:fixed;z-index:2147483000;display:none;pointer-events:auto;background:#f3c65e;color:#17212a;border:2px solid #17212a;border-radius:4px;padding:7px 10px;font:950 12px/1 system-ui,sans-serif;box-shadow:0 2px 0 #000;cursor:pointer}
+      #jax-roster-nav .jax-roster-team{position:fixed;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;background:#1548b5;color:#fff;border:2px solid #fff;border-radius:3px;font-weight:950;letter-spacing:.3px;text-shadow:1px 1px #000;padding:0 4px;font-family:monospace}
+      #jax-roster-trade-action{position:fixed;z-index:2147483000;display:none;pointer-events:auto;background:#1548b5;color:#fff;border:2px solid #fff;border-radius:4px;padding:7px 10px;font:950 12px/1 monospace;box-shadow:0 2px 0 #071c58;cursor:pointer}
+      #jax-roster-all-teams{position:fixed;z-index:2147483000;display:none;pointer-events:auto;background:#1548b5;color:#fff;border:2px solid #fff;border-radius:3px;padding:2px 3px;font:900 9px/1.05 monospace;letter-spacing:.1px;white-space:pre-line;box-shadow:0 2px 0 #091c52;cursor:pointer;text-align:center}
+      #jax-roster-all-teams:active{transform:translateY(1px)}
+      #jax-roster-team-list{position:fixed;z-index:2147483001;display:none;pointer-events:auto;overflow:auto;max-height:64vh;background:rgba(13,43,121,.98);border:2px solid #fff;box-shadow:0 3px 0 #071a4a;padding:4px;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px}
+      #jax-roster-team-list.open{display:grid}
+      #jax-roster-team-list button{background:#1445b1;color:#fff;border:1px solid #b9d2ff;padding:5px 4px;font:900 10px/1.1 monospace;cursor:pointer;min-width:0;overflow-wrap:anywhere}
+      #jax-roster-team-list button.current{background:#fff;color:#123a9b;border-color:#f4d13f}
       #${LAUNCHER_ID}:hover{filter:brightness(1.05);transform:translateY(-1px)}
       #${ROOT_ID}{position:fixed;inset:0;z-index:2147483001;background:rgba(4,10,15,.84);display:none;align-items:center;justify-content:center;padding:12px;font:14px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;color:#f2f5f7}
       #${ROOT_ID}.open{display:flex}
@@ -943,10 +951,8 @@
 
   function currentRoomName() {
     try {
-      // Retro Bowl's generated globals are normally exposed on window, but
-      // also try the direct global bindings in case the host wrapper differs.
       var roomIndex = window._pY2;
-      if (roomIndex === undefined) {
+      if (roomIndex === undefined || roomIndex === null) {
         try { if (typeof _pY2 !== "undefined") roomIndex = _pY2; } catch (ignored) {}
       }
       var roomManager = window._TO2;
@@ -956,6 +962,9 @@
       if (roomIndex === undefined || roomIndex === null || !roomManager || typeof roomManager._Ue2 !== "function") return "";
       var room = roomManager._Ue2(roomIndex);
       if (typeof room === "string") return room;
+      // GameMaker's room manager returns an instance wrapper; the actual room
+      // definition (and its name such as rm_roster) lives in room._kY2._51.
+      if (room && room._kY2 && room._kY2._51) return String(room._kY2._51);
       if (room && (room._51 || room.name || room.roomName)) return String(room._51 || room.name || room.roomName);
       return "";
     } catch (err) { return ""; }
@@ -1025,6 +1034,51 @@
       event.preventDefault(); event.stopPropagation(); openTradeForViewedPlayer();
     });
     document.body.appendChild(rosterTradeButton);
+
+    rosterAllTeamsButton = document.createElement("button");
+    rosterAllTeamsButton.id = "jax-roster-all-teams";
+    rosterAllTeamsButton.type = "button";
+    rosterAllTeamsButton.textContent = "VIEW ALL\nTEAMS";
+    rosterAllTeamsButton.setAttribute("aria-label", "View all teams");
+    rosterAllTeamsButton.addEventListener("click", function (event) {
+      event.preventDefault(); event.stopPropagation();
+      var controller = rosterBrowse.controller || findController();
+      if (!controller) return;
+      if (!rosterBrowse.active) startRosterBrowse(controller);
+      buildAllTeamsList(controller);
+      if (rosterTeamList) rosterTeamList.classList.toggle("open");
+    });
+    document.body.appendChild(rosterAllTeamsButton);
+
+    rosterTeamList = document.createElement("div");
+    rosterTeamList.id = "jax-roster-team-list";
+    rosterTeamList.setAttribute("aria-label", "All teams");
+    document.body.appendChild(rosterTeamList);
+  }
+
+  function buildAllTeamsList(controller) {
+    if (!rosterTeamList || !controller) return;
+    var teams = alphabeticalTeams(controller);
+    rosterTeamList.innerHTML = "";
+    teams.forEach(function (team) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = team.name;
+      if (team.id === rosterBrowse.currentTeamId) button.classList.add("current");
+      button.addEventListener("click", function (event) {
+        event.preventDefault(); event.stopPropagation();
+        if (!rosterBrowse.active) startRosterBrowse(controller);
+        if (activateRivalRoster(team)) {
+          rosterBrowse.currentTeamId = team.id;
+          if (rosterNavLabel) rosterNavLabel.textContent = team.name + (team.tla ? " · " + team.tla : "");
+          rosterTeamList.classList.remove("open");
+          positionRosterControls("rm_roster");
+        } else if (rosterNavLabel) {
+          rosterNavLabel.textContent = "Roster unavailable";
+        }
+      });
+      rosterTeamList.appendChild(button);
+    });
   }
 
   function positionRosterControls(roomName) {
@@ -1035,6 +1089,7 @@
     var showNav = isRosterRoom(roomName);
     rosterNav.style.display = showNav && canvas ? "block" : "none";
     rosterTradeButton.style.display = "none";
+    if (rosterAllTeamsButton) rosterAllTeamsButton.style.display = showNav && canvas ? "block" : "none";
     if (!canvas) return;
     var rect = canvas.getBoundingClientRect();
     var sx = rect.width / 480;
@@ -1047,15 +1102,26 @@
       el.style.fontSize = Math.max(10, 12 * sy) + "px";
     }
     if (showNav) {
-      place(rosterPrevButton, 143, 7, 27, 22);
-      place(rosterNavLabel, 172, 7, 136, 22);
-      place(rosterNextButton, 310, 7, 27, 22);
-      var ctl = rosterBrowse.controller;
+      // Match the requested game-style layout: team title across the top,
+      // navigation arrows at the left/right edges, and a View All Teams button
+      // near the bottom-left of the native roster screen.
+      place(rosterPrevButton, 1, 143, 19, 24);
+      place(rosterNavLabel, 183, 7, 114, 20);
+      place(rosterNextButton, 460, 143, 19, 24);
+      place(rosterAllTeamsButton, 83, 237, 54, 25);
+      rosterAllTeamsButton.style.fontSize = Math.max(8, 8 * Math.min(1.4, sy)) + "px";
+      var ctl = rosterBrowse.controller || findController();
       var team = ctl && alphabeticalTeams(ctl).filter(function (entry) { return entry.id === rosterBrowse.currentTeamId; })[0];
       rosterNavLabel.textContent = team ? (team.name + (team.tla ? " · " + team.tla : "")) : "ROSTER";
       rosterNavLabel.title = team ? team.name : "Roster";
       var buttonScale = Math.max(0.8, Math.min(1.6, sy));
       rosterNavLabel.style.fontSize = Math.max(9, 10 * buttonScale) + "px";
+      if (rosterTeamList) {
+        place(rosterTeamList, 145, 42, 190, 174);
+      }
+    } else {
+      if (rosterAllTeamsButton) rosterAllTeamsButton.style.display = "none";
+      if (rosterTeamList) rosterTeamList.classList.remove("open");
     }
     // The game's own player-profile room still renders the portrait and stats.
     // Add our trade action only when the selected map belongs to the viewed rival.
@@ -1185,6 +1251,8 @@
     rosterBrowse.roomName = "";
     if (rosterNav) rosterNav.style.display = "none";
     if (rosterTradeButton) rosterTradeButton.style.display = "none";
+    if (rosterAllTeamsButton) rosterAllTeamsButton.style.display = "none";
+    if (rosterTeamList) rosterTeamList.classList.remove("open");
   }
 
   function openTradeForViewedPlayer() {
@@ -1260,7 +1328,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.3-roster-arrows-visible-hub",
+    version: "1.4-native-roster-team-browser",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
