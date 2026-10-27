@@ -1,30 +1,31 @@
 
 /*
  * Retro Bowl Trade System
- * First version: AI trade evaluation.
+ * Version 0.2 - Shared AI trade evaluator
  */
 
-const TradeSystem = (() => {
+(function () {
   function evaluateOffer(offer, team) {
-    const offeredValue =
-      Number(offer?.offeredValue) || 0;
-
-    const requestedValue =
-      Number(offer?.requestedValue) || 0;
+    var offeredValue = Number(offer.offeredValue) || 0;
+    var requestedValue = Number(offer.requestedValue) || 0;
 
     if (offeredValue <= 0 || requestedValue <= 0) {
       return {
         decision: "reject",
-        reason: "The offer is invalid."
+        reason: "Invalid trade offer."
       };
     }
 
-    const ratio = offeredValue / requestedValue;
+    var ratio = offeredValue / requestedValue;
+
+    // Teams can have different preferences.
+    var needsBonus = Number(team && team.needsBonus) || 0;
+    ratio += needsBonus;
 
     if (ratio >= 1.15) {
       return {
         decision: "accept",
-        reason: "This is a good deal for our team."
+        reason: "This deal offers good value."
       };
     }
 
@@ -37,9 +38,11 @@ const TradeSystem = (() => {
 
     return {
       decision: "reject",
-      reason: "The offer does not meet our needs."
+      reason: "This deal does not meet our needs."
     };
   }
 
-  return { evaluateOffer };
+  window.TradeSystem = {
+    evaluateOffer: evaluateOffer
+  };
 })();
