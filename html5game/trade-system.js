@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.5 — Roster browser diagnostics
+ * Version 1.6 — Active-room detection fix
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -956,7 +956,35 @@
     status.innerHTML = '<div class="tc-message' + (isError ? ' error' : '') + '">' + esc(message) + '</div>';
   }
 
+  function activeRoomObject() {
+    // Retro Bowl's GameMaker runtime keeps the currently rendered room in
+    // _Sc2. _pY2 is only the pending room-change index and can legitimately
+    // be -1 while the current room is still being rendered.
+    try {
+      if (window._Sc2 && typeof window._Sc2 === "object") return window._Sc2;
+    } catch (err) {}
+    try {
+      if (typeof _Sc2 !== "undefined" && _Sc2 && typeof _Sc2 === "object") return _Sc2;
+    } catch (err) {}
+    return null;
+  }
+
+  function roomNameFromObject(room) {
+    if (!room) return "";
+    if (typeof room === "string") return room;
+    try {
+      if (room._kY2 && room._kY2._51) return String(room._kY2._51);
+      if (room._51 || room.name || room.roomName) return String(room._51 || room.name || room.roomName);
+    } catch (err) {}
+    return "";
+  }
+
   function currentRoomName() {
+    // Prefer the actual active room. The old code only consulted _pY2, which
+    // the user's diagnostic showed as -1 on the visible roster screen.
+    var activeName = roomNameFromObject(activeRoomObject());
+    if (activeName) return activeName;
+
     try {
       var roomIndex = window._pY2;
       if (roomIndex === undefined || roomIndex === null) {
@@ -966,14 +994,8 @@
       if (!roomManager) {
         try { if (typeof _TO2 !== "undefined") roomManager = _TO2; } catch (ignored) {}
       }
-      if (roomIndex === undefined || roomIndex === null || !roomManager || typeof roomManager._Ue2 !== "function") return "";
-      var room = roomManager._Ue2(roomIndex);
-      if (typeof room === "string") return room;
-      // GameMaker's room manager returns an instance wrapper; the actual room
-      // definition (and its name such as rm_roster) lives in room._kY2._51.
-      if (room && room._kY2 && room._kY2._51) return String(room._kY2._51);
-      if (room && (room._51 || room.name || room.roomName)) return String(room._51 || room.name || room.roomName);
-      return "";
+      if (roomIndex === undefined || roomIndex === null || Number(roomIndex) < 0 || !roomManager || typeof roomManager._Ue2 !== "function") return "";
+      return roomNameFromObject(roomManager._Ue2(Number(roomIndex)));
     } catch (err) { return ""; }
   }
 
@@ -1303,7 +1325,7 @@
     var head = document.createElement("div");
     head.className = "jax-debug-head";
     var title = document.createElement("span");
-    title.textContent = "ROSTER BROWSER DIAGNOSTIC v1.5";
+    title.textContent = "ROSTER BROWSER DIAGNOSTIC v1.6";
     var hide = document.createElement("button");
     hide.type = "button";
     hide.textContent = "HIDE";
@@ -1322,6 +1344,8 @@
     if (!rosterDebugPanel || !rosterDebugText) return;
     var roomName = currentRoomName();
     var roomIndex = (typeof window._pY2 === "number" || typeof window._pY2 === "string") ? window._pY2 : "not exposed on window";
+    var activeRoom = activeRoomObject();
+    var activeRoomLabel = roomNameFromObject(activeRoom) || (activeRoom ? "object found; name unavailable" : "not exposed");
     var roomManager = window._TO2;
     var managerReady = !!(roomManager && typeof roomManager._Ue2 === "function");
     var nativeRoomHelper = "not available";
@@ -1345,6 +1369,7 @@
     rosterDebugText.textContent = [
       "Room index: " + roomIndex,
       "Room name: " + (roomName || "(could not read)"),
+      "Active room object: " + activeRoomLabel,
       "Native room helper: " + nativeRoomHelper,
       "Roster recognized: " + (isRosterRoom(roomName) ? "YES" : "NO"),
       "Room manager ready: " + (managerReady ? "YES" : "NO"),
@@ -1407,7 +1432,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.5-roster-browser-diagnostics",
+    version: "1.6-active-room-detection-fix",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
