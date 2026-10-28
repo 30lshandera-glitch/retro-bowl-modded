@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.6 — Active-room detection fix
+ * Version 1.7 — Robust roster-room matching
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -999,9 +999,19 @@
     } catch (err) { return ""; }
   }
 
+  function normalizeRoomToken(roomName) {
+    // Room names can contain invisible formatting characters or whitespace
+    // from the GameMaker runtime wrappers. Keep only ASCII letters/numbers so
+    // variants like "rm_roster", "rm roster", and "rm_roster\u200b" match.
+    return String(roomName == null ? "" : roomName)
+      .toLowerCase()
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/[^a-z0-9]/g, "");
+  }
+
   function isRosterRoom(roomName) {
-    var normalized = String(roomName || "").toLowerCase();
-    return normalized === "rm_roster" || normalized === "roster" || normalized.endsWith("_roster");
+    var normalized = normalizeRoomToken(roomName);
+    return normalized === "rmroster" || normalized === "roster" || normalized.endsWith("roster");
   }
 
   function alphabeticalTeams(controller) {
@@ -1367,8 +1377,13 @@
     var rightRect = rosterNextButton ? rosterNextButton.getBoundingClientRect() : null;
     var rightRectText = rightRect ? (Math.round(rightRect.left) + "," + Math.round(rightRect.top) + " " + Math.round(rightRect.width) + "×" + Math.round(rightRect.height)) : "not built";
     rosterDebugText.textContent = [
+      "Script version: 1.7-robust-room-match",
+      "Loaded script URL: " + (Array.prototype.slice.call(document.scripts).filter(function (script) { return /trade-system\.js(?:[?#]|$)/i.test(script.src || ""); }).map(function (script) { return script.src; }).join(" | ") || "not found"),
       "Room index: " + roomIndex,
       "Room name: " + (roomName || "(could not read)"),
+      "Room name raw: " + JSON.stringify(roomName),
+      "Room name char codes: " + Array.prototype.map.call(String(roomName || ""), function (ch) { return ch.charCodeAt(0).toString(16); }).join(" "),
+      "Normalized room token: " + normalizeRoomToken(roomName),
       "Active room object: " + activeRoomLabel,
       "Native room helper: " + nativeRoomHelper,
       "Roster recognized: " + (isRosterRoom(roomName) ? "YES" : "NO"),
@@ -1432,7 +1447,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.6-active-room-detection-fix",
+    version: "1.7-robust-room-match",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
