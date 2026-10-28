@@ -1,6 +1,6 @@
 /*
  * Retro Bowl Modded — Team Browser & Trade Center
- * Version 1.7 — Robust roster-room matching
+ * Version 1.8 — Refresh native roster cards
  *
  * This add-on uses Retro Bowl's exposed GameMaker helpers to read the current
  * team, roster, credit balance, draft picks, and team list. Rival rosters are
@@ -26,6 +26,7 @@
   // whenever the player leaves the roster/profile screens.
   var rosterBrowse = {
     active: false,
+    manualSelection: false,
     controller: null,
     ownListId: null,
     currentTeamId: null,
@@ -1010,8 +1011,25 @@
   }
 
   function isRosterRoom(roomName) {
+    var raw = String(roomName == null ? "" : roomName).toLowerCase();
     var normalized = normalizeRoomToken(roomName);
-    return normalized === "rmroster" || normalized === "roster" || normalized.endsWith("roster");
+    // Prefer the normalized exact names, but accept the visible room label too.
+    // The runtime diagnostic has returned variants such as "rm roster".
+    return raw.indexOf("roster") !== -1 || normalized === "rmroster" || normalized === "roster" || normalized.endsWith("roster");
+  }
+
+  function refreshNativeRosterRoom() {
+    // The game's own Roster List button navigates to room 34 (rm_roster).
+    // Re-entering the native room after changing the active list lets its
+    // player-card instances rebuild from controller._Ln instead of leaving
+    // the old cards on screen with only our HTML team label updated.
+    try {
+      if (typeof window._Hj === "function") {
+        window._Hj(34);
+        return true;
+      }
+    } catch (err) {}
+    return false;
   }
 
   function alphabeticalTeams(controller) {
@@ -1109,8 +1127,10 @@
         if (!rosterBrowse.active) startRosterBrowse(controller);
         if (activateRivalRoster(team)) {
           rosterBrowse.currentTeamId = team.id;
+          rosterBrowse.manualSelection = true;
           if (rosterNavLabel) rosterNavLabel.textContent = team.name + (team.tla ? " · " + team.tla : "");
           rosterTeamList.classList.remove("open");
+          refreshNativeRosterRoom();
           positionRosterControls("rm_roster");
         } else if (rosterNavLabel) {
           rosterNavLabel.textContent = "Roster unavailable";
@@ -1264,13 +1284,16 @@
       return;
     }
     rosterBrowse.currentTeamId = target.id;
+    rosterBrowse.manualSelection = true;
     rosterNavLabel.textContent = target.name + (target.tla ? " · " + target.tla : "");
+    refreshNativeRosterRoom();
     positionRosterControls("rm_roster");
   }
 
   function startRosterBrowse(controller) {
     if (rosterBrowse.active) return;
     rosterBrowse.active = true;
+    rosterBrowse.manualSelection = false;
     rosterBrowse.controller = controller;
     rosterBrowse.ownListId = controller._Ln;
     rosterBrowse.currentTeamId = toNumber(controller._Ip, -999);
@@ -1284,6 +1307,7 @@
     disposeTemporaryRoster();
     if (controller && rosterBrowse.ownListId !== null) controller._Ln = rosterBrowse.ownListId;
     rosterBrowse.active = false;
+    rosterBrowse.manualSelection = false;
     rosterBrowse.controller = null;
     rosterBrowse.ownListId = null;
     rosterBrowse.currentTeamId = null;
@@ -1335,7 +1359,7 @@
     var head = document.createElement("div");
     head.className = "jax-debug-head";
     var title = document.createElement("span");
-    title.textContent = "ROSTER BROWSER DIAGNOSTIC v1.6";
+    title.textContent = "ROSTER BROWSER DIAGNOSTIC v1.8";
     var hide = document.createElement("button");
     hide.type = "button";
     hide.textContent = "HIDE";
@@ -1377,7 +1401,7 @@
     var rightRect = rosterNextButton ? rosterNextButton.getBoundingClientRect() : null;
     var rightRectText = rightRect ? (Math.round(rightRect.left) + "," + Math.round(rightRect.top) + " " + Math.round(rightRect.width) + "×" + Math.round(rightRect.height)) : "not built";
     rosterDebugText.textContent = [
-      "Script version: 1.7-robust-room-match",
+      "Script version: 1.8-native-roster-refresh",
       "Loaded script URL: " + (Array.prototype.slice.call(document.scripts).filter(function (script) { return /trade-system\.js(?:[?#]|$)/i.test(script.src || ""); }).map(function (script) { return script.src; }).join(" | ") || "not found"),
       "Room index: " + roomIndex,
       "Room name: " + (roomName || "(could not read)"),
@@ -1418,6 +1442,13 @@
     }
 
     if (!controller || !roomName) {
+      // A room transition can briefly leave the active-room name unavailable.
+      // After an arrow/team selection, don't restore the original roster during
+      // that gap or the native player cards immediately revert to your team.
+      if (rosterBrowse.active && rosterBrowse.manualSelection && controller === rosterBrowse.controller) {
+        positionRosterControls("rm_roster");
+        return;
+      }
       if (rosterBrowse.active) stopRosterBrowse();
       positionRosterControls("");
       return;
@@ -1425,8 +1456,15 @@
     if (rosterBrowse.active && controller !== rosterBrowse.controller) stopRosterBrowse();
     // Keep the temporary native list alive while the game's own player details
     // or stats screens are showing a player from that list.
-    var keepBrowse = roomName === "rm_profile_player" || roomName === "rm_stats_player" || roomName === "rm_stats";
-    if (rosterBrowse.active && !keepBrowse) stopRosterBrowse();
+    var normalizedRoom = normalizeRoomToken(roomName);
+    var keepBrowse = normalizedRoom.indexOf("profileplayer") !== -1 || normalizedRoom.indexOf("statsplayer") !== -1 || normalizedRoom === "rmstats";
+    if (rosterBrowse.active && !keepBrowse && !isRosterRoom(roomName) && !rosterBrowse.manualSelection) stopRosterBrowse();
+    if (rosterBrowse.active && !keepBrowse && !isRosterRoom(roomName) && rosterBrowse.manualSelection) {
+      // Preserve manually selected rosters for unknown intermediary room names;
+      // return to normal cleanup once a clearly different room is entered.
+      var isKnownOtherRoom = normalizedRoom.indexOf("home") !== -1 || normalizedRoom.indexOf("menu") !== -1 || normalizedRoom.indexOf("calendar") !== -1 || normalizedRoom.indexOf("stadium") !== -1 || normalizedRoom.indexOf("practice") !== -1 || normalizedRoom.indexOf("match") !== -1 || normalizedRoom.indexOf("draft") !== -1 || normalizedRoom.indexOf("freeagent") !== -1 || normalizedRoom.indexOf("trade") !== -1;
+      if (isKnownOtherRoom) stopRosterBrowse();
+    }
     positionRosterControls(roomName);
   }
 
@@ -1447,7 +1485,7 @@
 
   // Public API is helpful for diagnostics from the browser console.
   window.TradeSystem = {
-    version: "1.7-robust-room-match",
+    version: "1.8-native-roster-refresh",
     open: openTradeCenter,
     close: closeTradeCenter,
     getBrowserStatus: function () {
